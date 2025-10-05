@@ -10,6 +10,16 @@ import matplotlib.dates as mdates
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
+
+class NavigationToolbar(QWidget):
+    """Compatibility shim so stale toolbar references do not crash the app."""
+
+    def __init__(self, canvas, parent=None):
+        super().__init__(parent)
+        # Old layouts may still instantiate the toolbar; keep it invisible and inert.
+        self.hide()
+
+
 COMMISSION = 0.0001
 SLIPPAGE   = 0.0001
 
