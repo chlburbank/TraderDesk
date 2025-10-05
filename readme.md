@@ -34,22 +34,34 @@ Example: SPY with 50/200 SMA crossover
 ```bash
 git clone https://github.com/chlburbank/TraderDesk.git
 cd TraderDesk
+```
 
+### 2 Clone the repository
+```bash
 Create a virtual environment
 python -m venv ta_env
+```
 
 3️⃣ Activate it
+```bash
 🟦 On Windows PowerShell:
 .\ta_env\Scripts\Activate.ps1
+```
 
 🟩 On macOS/Linux:
+```bash
 source ta_env/bin/activate
+```
 
 4️⃣ Install dependencies
+```bash
 pip install -r requirements.txt
+```
 
 5️⃣ Run the app
+```bash
 python traderdesk.py
+```
 
 This project is for learning algorithmic trading — not for live trading or financial advice:
 
