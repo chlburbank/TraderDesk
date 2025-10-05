@@ -72,6 +72,7 @@ class CtrlScrollZoom:
     def __init__(self, canvas):
         self.canvas = canvas
         self.axes_limits = {}
+        self._drag_info = None
         # Ensure the canvas can catch modifier-aware wheel events and key presses.
         try:
             self.canvas.setFocusPolicy(Qt.StrongFocus)
@@ -79,6 +80,9 @@ class CtrlScrollZoom:
             pass
         self.cid_scroll = canvas.mpl_connect("scroll_event", self.on_scroll)
         self.cid_key = canvas.mpl_connect("key_press_event", self.on_key_press)
+        self.cid_press = canvas.mpl_connect("button_press_event", self.on_button_press)
+        self.cid_release = canvas.mpl_connect("button_release_event", self.on_button_release)
+        self.cid_motion = canvas.mpl_connect("motion_notify_event", self.on_mouse_move)
 
     def register_axes(self, axes, full_xlim=None):
         if not axes:
@@ -95,8 +99,6 @@ class CtrlScrollZoom:
             return
         if self._modifier_active(event, Qt.ControlModifier):
             self._zoom(ax, event)
-        elif self._modifier_active(event, Qt.ShiftModifier):
-            self._pan(ax, event)
 
     def on_key_press(self, event):
         if not event.key:
@@ -106,6 +108,42 @@ class CtrlScrollZoom:
             for ax, limits in self.axes_limits.items():
                 ax.set_xlim(limits)
             self.canvas.draw_idle()
+
+    def on_button_press(self, event):
+        if event.inaxes is None or event.button != 1 or event.xdata is None:
+            return
+        ax = event.inaxes
+        self._drag_info = (ax, float(event.xdata), tuple(float(v) for v in ax.get_xlim()))
+
+    def on_mouse_move(self, event):
+        if not self._drag_info or event.inaxes is None or event.xdata is None:
+            return
+        ax, start_x, (orig_left, orig_right) = self._drag_info
+        if event.inaxes is not ax:
+            return
+        delta = float(event.xdata) - start_x
+        left = orig_left - delta
+        right = orig_right - delta
+        limits = self.axes_limits.get(ax)
+        if limits:
+            data_left, data_right = limits
+            span = right - left
+            if span >= data_right - data_left:
+                left, right = data_left, data_right
+            else:
+                if left < data_left:
+                    left = data_left
+                    right = data_left + span
+                if right > data_right:
+                    right = data_right
+                    left = data_right - span
+        ax.set_xlim(left, right)
+        self.canvas.draw_idle()
+
+    def on_button_release(self, event):
+        if event.button != 1:
+            return
+        self._drag_info = None
 
     def _zoom(self, ax, event):
         if event.xdata is None:
@@ -149,29 +187,7 @@ class CtrlScrollZoom:
         key = (event.key or "").lower()
         if modifier == Qt.ControlModifier:
             return "control" in key or "ctrl" in key
-        if modifier == Qt.ShiftModifier:
-            return "shift" in key
         return False
-
-    def _pan(self, ax, event):
-        cur_left, cur_right = ax.get_xlim()
-        move = (cur_right - cur_left) * 0.2
-        if event.button == "up":
-            move *= -1
-        left = cur_left + move
-        right = cur_right + move
-        limits = self.axes_limits.get(ax)
-        if limits:
-            data_left, data_right = limits
-            span = right - left
-            if left < data_left:
-                left = data_left
-                right = data_left + span
-            if right > data_right:
-                right = data_right
-                left = data_right - span
-        ax.set_xlim(left, right)
-        self.canvas.draw_idle()
 
 # ---------- GUI ----------
 class TraderDesk(QWidget):
@@ -299,7 +315,7 @@ class TraderDesk(QWidget):
                 f"Buy&Hold  CAGR {bh_stats['CAGR']*100:.2f}%  Sharpe {bh_stats['Sharpe']:.2f}  MaxDD {bh_stats['MaxDD']*100:.2f}%\n"
             )
             if not self._zoom_hint_logged:
-                self.append_log("Hold Ctrl and use the mouse wheel to zoom, Shift + wheel to pan, and press R to reset the view.")
+                self.append_log("Hold Ctrl and use the mouse wheel to zoom, drag with the left mouse button to pan, and press R to reset the view.")
                 self._zoom_hint_logged = True
             self.tabs.setCurrentIndex(1)
 
