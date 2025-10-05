@@ -1,15 +1,13 @@
 import sys
 import numpy as np, pandas as pd, yfinance as yf
 from datetime import datetime
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QTextEdit, QMessageBox, QTabWidget, QCheckBox
 )
 import matplotlib.dates as mdates
-from matplotlib.backends.backend_qtagg import (
-    FigureCanvasQTAgg as FigureCanvas,
-    NavigationToolbar2QT as NavigationToolbar,
-)
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
 COMMISSION = 0.0001
@@ -64,6 +62,11 @@ class CtrlScrollZoom:
     def __init__(self, canvas):
         self.canvas = canvas
         self.axes_limits = {}
+        # Ensure the canvas can catch modifier-aware wheel events and key presses.
+        try:
+            self.canvas.setFocusPolicy(Qt.StrongFocus)
+        except AttributeError:
+            pass
         self.cid_scroll = canvas.mpl_connect("scroll_event", self.on_scroll)
         self.cid_key = canvas.mpl_connect("key_press_event", self.on_key_press)
 
@@ -80,10 +83,9 @@ class CtrlScrollZoom:
         ax = event.inaxes
         if ax is None:
             return
-        key = (event.key or "").lower()
-        if "control" in key or "ctrl" in key:
+        if self._modifier_active(event, Qt.ControlModifier):
             self._zoom(ax, event)
-        elif "shift" in key:
+        elif self._modifier_active(event, Qt.ShiftModifier):
             self._pan(ax, event)
 
     def on_key_press(self, event):
@@ -126,6 +128,20 @@ class CtrlScrollZoom:
                     left = data_right - width
         ax.set_xlim(left, right)
         self.canvas.draw_idle()
+
+    def _modifier_active(self, event, modifier):
+        gui_event = getattr(event, "guiEvent", None)
+        if gui_event is not None:
+            try:
+                return bool(gui_event.modifiers() & modifier)
+            except AttributeError:
+                pass
+        key = (event.key or "").lower()
+        if modifier == Qt.ControlModifier:
+            return "control" in key or "ctrl" in key
+        if modifier == Qt.ShiftModifier:
+            return "shift" in key
+        return False
 
     def _pan(self, ax, event):
         cur_left, cur_right = ax.get_xlim()
