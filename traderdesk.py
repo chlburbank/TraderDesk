@@ -207,10 +207,12 @@ class TraderDesk(QWidget):
 
         self.tabs = QTabWidget()
         self.fig_price = Figure(figsize=(8,5)); self.canvas_price = FigureCanvas(self.fig_price)
-        price_tab = QWidget(); v1 = QVBoxLayout(); v1.addWidget(self.canvas_price); price_tab.setLayout(v1)
+        self.toolbar_price = NavigationToolbar(self.canvas_price, self)
+        price_tab = QWidget(); v1 = QVBoxLayout(); v1.addWidget(self.toolbar_price); v1.addWidget(self.canvas_price); price_tab.setLayout(v1)
         self.tabs.addTab(price_tab, "Price")
         self.fig_perf = Figure(figsize=(8,7)); self.canvas_perf = FigureCanvas(self.fig_perf)
-        perf_tab = QWidget(); v2 = QVBoxLayout(); v2.addWidget(self.canvas_perf); perf_tab.setLayout(v2)
+        self.toolbar_perf = NavigationToolbar(self.canvas_perf, self)
+        perf_tab = QWidget(); v2 = QVBoxLayout(); v2.addWidget(self.toolbar_perf); v2.addWidget(self.canvas_perf); perf_tab.setLayout(v2)
         self.tabs.addTab(perf_tab, "Performance")
 
         top = QHBoxLayout()
