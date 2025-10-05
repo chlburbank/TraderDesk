@@ -5,7 +5,11 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QTextEdit, QMessageBox, QTabWidget, QCheckBox
 )
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+import matplotlib.dates as mdates
+from matplotlib.backends.backend_qtagg import (
+    FigureCanvasQTAgg as FigureCanvas,
+    NavigationToolbar2QT as NavigationToolbar,
+)
 from matplotlib.figure import Figure
 
 COMMISSION = 0.0001
@@ -73,10 +77,12 @@ class TraderDesk(QWidget):
 
         self.tabs = QTabWidget()
         self.fig_price = Figure(figsize=(8,5)); self.canvas_price = FigureCanvas(self.fig_price)
-        price_tab = QWidget(); v1 = QVBoxLayout(); v1.addWidget(self.canvas_price); price_tab.setLayout(v1)
+        self.toolbar_price = NavigationToolbar(self.canvas_price, self)
+        price_tab = QWidget(); v1 = QVBoxLayout(); v1.addWidget(self.toolbar_price); v1.addWidget(self.canvas_price); price_tab.setLayout(v1)
         self.tabs.addTab(price_tab, "Price")
         self.fig_perf = Figure(figsize=(8,7)); self.canvas_perf = FigureCanvas(self.fig_perf)
-        perf_tab = QWidget(); v2 = QVBoxLayout(); v2.addWidget(self.canvas_perf); perf_tab.setLayout(v2)
+        self.toolbar_perf = NavigationToolbar(self.canvas_perf, self)
+        perf_tab = QWidget(); v2 = QVBoxLayout(); v2.addWidget(self.toolbar_perf); v2.addWidget(self.canvas_perf); perf_tab.setLayout(v2)
         self.tabs.addTab(perf_tab, "Performance")
 
         top = QHBoxLayout()
@@ -91,6 +97,9 @@ class TraderDesk(QWidget):
         layout.addWidget(QLabel("Backtest / Logs")); layout.addWidget(self.log)
         self.setLayout(layout)
         self.btn_plot.clicked.connect(self.plot_and_backtest)
+        self.show_trades.stateChanged.connect(self.toggle_trade_markers)
+
+        self.trade_markers = []
 
     def append_log(self, txt): self.log.append(txt)
 
@@ -117,12 +126,32 @@ class TraderDesk(QWidget):
             ax.plot(df.index, df["Adj Close"], label="Adj Close")
             ax.plot(df.index, df["SMA_fast"], label=f"SMA {fast}")
             ax.plot(df.index, df["SMA_slow"], label=f"SMA {slow}")
-            if show:
-                diff = bt["position"].diff().fillna(bt["position"])
-                buy = bt.index[diff == 1]; sell = bt.index[diff == -1]
-                ax.scatter(buy, df.loc[buy,"Adj Close"], marker="^", color="green", s=80, label="Buy")
-                ax.scatter(sell,df.loc[sell,"Adj Close"], marker="v", color="red", s=80, label="Sell")
+            locator = mdates.AutoDateLocator()
+            ax.xaxis.set_major_locator(locator)
+            ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
+            diff = bt["position"].diff().fillna(bt["position"])
+            buy = bt.index[diff == 1]; sell = bt.index[diff == -1]
+            buy_scatter = ax.scatter(
+                buy,
+                df.loc[buy, "Adj Close"],
+                marker="^",
+                color="green",
+                s=80,
+                label="Buy",
+                visible=show,
+            )
+            sell_scatter = ax.scatter(
+                sell,
+                df.loc[sell, "Adj Close"],
+                marker="v",
+                color="red",
+                s=80,
+                label="Sell",
+                visible=show,
+            )
+            self.trade_markers = [buy_scatter, sell_scatter]
             ax.set_title(f"{ticker} – Price & SMAs"); ax.legend()
+            self.fig_price.autofmt_xdate()
             self.fig_price.tight_layout(); self.canvas_price.draw()
 
             # --- Performance tab (Equity + Benchmark + Drawdown) ---
@@ -130,6 +159,9 @@ class TraderDesk(QWidget):
             ax1 = self.fig_perf.add_subplot(211)
             ax1.plot(bt.index, bt["equity"], label="Strategy")
             ax1.plot(bh.index, bh["bh_equity"], color="gray", linestyle="--", label="Buy & Hold")
+            locator_perf = mdates.AutoDateLocator()
+            ax1.xaxis.set_major_locator(locator_perf)
+            ax1.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator_perf))
             ax1.set_title("Equity Curve (vs Buy & Hold)")
             ax1.legend(); ax1.grid(True, alpha=0.3)
 
@@ -137,6 +169,7 @@ class TraderDesk(QWidget):
             ax2.plot(bt.index, bt["drawdown"], label="Strategy DD")
             ax2.plot(bh.index, bh["bh_drawdown"], color="gray", linestyle="--", label="B&H DD")
             ax2.set_title("Drawdown Comparison"); ax2.legend(); ax2.grid(True, alpha=0.3)
+            self.fig_perf.autofmt_xdate()
             self.fig_perf.tight_layout(); self.canvas_perf.draw()
 
             self.append_log(
@@ -147,6 +180,14 @@ class TraderDesk(QWidget):
 
         except Exception as e:
             QMessageBox.critical(self,"Error",str(e))
+
+    def toggle_trade_markers(self):
+        if not self.trade_markers:
+            return
+        show = self.show_trades.isChecked()
+        for marker in self.trade_markers:
+            marker.set_visible(show)
+        self.canvas_price.draw_idle()
 
 def main():
     app = QApplication(sys.argv)
