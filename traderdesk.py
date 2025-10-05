@@ -1,10 +1,11 @@
-import sys, math
+import sys
 import numpy as np, pandas as pd, yfinance as yf
 from datetime import datetime
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QTextEdit, QMessageBox, QTabWidget, QCheckBox
 )
+import matplotlib.dates as mdates
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
@@ -55,6 +56,94 @@ def benchmark(df):
     bh["bh_drawdown"] = bh["bh_equity"] / roll_max - 1.0
     return bh
 
+# ---------- interactivity helpers ----------
+class CtrlScrollZoom:
+    def __init__(self, canvas):
+        self.canvas = canvas
+        self.axes_limits = {}
+        self.cid_scroll = canvas.mpl_connect("scroll_event", self.on_scroll)
+        self.cid_key = canvas.mpl_connect("key_press_event", self.on_key_press)
+
+    def register_axes(self, axes, full_xlim=None):
+        if not axes:
+            return
+        if full_xlim is None:
+            limits = tuple(float(v) for v in axes[0].get_xlim())
+        else:
+            limits = tuple(float(v) for v in full_xlim)
+        self.axes_limits = {ax: limits for ax in axes}
+
+    def on_scroll(self, event):
+        ax = event.inaxes
+        if ax is None:
+            return
+        key = (event.key or "").lower()
+        if "control" in key or "ctrl" in key:
+            self._zoom(ax, event)
+        elif "shift" in key:
+            self._pan(ax, event)
+
+    def on_key_press(self, event):
+        if not event.key:
+            return
+        key = event.key.lower()
+        if key == "r":
+            for ax, limits in self.axes_limits.items():
+                ax.set_xlim(limits)
+            self.canvas.draw_idle()
+
+    def _zoom(self, ax, event):
+        if event.xdata is None:
+            return
+        base_scale = 0.8 if event.button == "up" else 1.25
+        cur_left, cur_right = ax.get_xlim()
+        cursor = float(event.xdata)
+        left = cursor - (cursor - cur_left) * base_scale
+        right = cursor + (cur_right - cursor) * base_scale
+        limits = self.axes_limits.get(ax)
+        if limits:
+            data_left, data_right = limits
+            span = max(data_right - data_left, 1e-9)
+            min_span = span / 1000
+        else:
+            data_left, data_right = cur_left, cur_right
+            min_span = (cur_right - cur_left) / 1000 if cur_right > cur_left else 1e-6
+        if right - left < min_span:
+            return
+        if limits:
+            width = right - left
+            if width > (data_right - data_left):
+                left, right = data_left, data_right
+            else:
+                if left < data_left:
+                    left = data_left
+                    right = data_left + width
+                if right > data_right:
+                    right = data_right
+                    left = data_right - width
+        ax.set_xlim(left, right)
+        self.canvas.draw_idle()
+
+    def _pan(self, ax, event):
+        cur_left, cur_right = ax.get_xlim()
+        move = (cur_right - cur_left) * 0.2
+        if event.button == "up":
+            move *= -1
+        left = cur_left + move
+        right = cur_right + move
+        limits = self.axes_limits.get(ax)
+        if limits:
+            data_left, data_right = limits
+            span = right - left
+            if left < data_left:
+                left = data_left
+                right = data_left + span
+            if right > data_right:
+                right = data_right
+                left = data_right - span
+        ax.set_xlim(left, right)
+        self.canvas.draw_idle()
+
 # ---------- GUI ----------
 class TraderDesk(QWidget):
     def __init__(self):
@@ -91,6 +180,12 @@ class TraderDesk(QWidget):
         layout.addWidget(QLabel("Backtest / Logs")); layout.addWidget(self.log)
         self.setLayout(layout)
         self.btn_plot.clicked.connect(self.plot_and_backtest)
+        self.show_trades.stateChanged.connect(self.toggle_trade_markers)
+
+        self.trade_markers = []
+        self.zoom_price = CtrlScrollZoom(self.canvas_price)
+        self.zoom_perf = CtrlScrollZoom(self.canvas_perf)
+        self._zoom_hint_logged = False
 
     def append_log(self, txt): self.log.append(txt)
 
@@ -117,19 +212,44 @@ class TraderDesk(QWidget):
             ax.plot(df.index, df["Adj Close"], label="Adj Close")
             ax.plot(df.index, df["SMA_fast"], label=f"SMA {fast}")
             ax.plot(df.index, df["SMA_slow"], label=f"SMA {slow}")
-            if show:
-                diff = bt["position"].diff().fillna(bt["position"])
-                buy = bt.index[diff == 1]; sell = bt.index[diff == -1]
-                ax.scatter(buy, df.loc[buy,"Adj Close"], marker="^", color="green", s=80, label="Buy")
-                ax.scatter(sell,df.loc[sell,"Adj Close"], marker="v", color="red", s=80, label="Sell")
+            locator = mdates.AutoDateLocator(minticks=6, maxticks=14)
+            ax.xaxis.set_major_locator(locator)
+            ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
+            diff = bt["position"].diff().fillna(bt["position"])
+            buy = bt.index[diff == 1]; sell = bt.index[diff == -1]
+            buy_scatter = ax.scatter(
+                buy,
+                df.loc[buy, "Adj Close"],
+                marker="^",
+                color="green",
+                s=80,
+                label="Buy",
+                visible=show,
+            )
+            sell_scatter = ax.scatter(
+                sell,
+                df.loc[sell, "Adj Close"],
+                marker="v",
+                color="red",
+                s=80,
+                label="Sell",
+                visible=show,
+            )
+            self.trade_markers = [buy_scatter, sell_scatter]
             ax.set_title(f"{ticker} – Price & SMAs"); ax.legend()
+            self.fig_price.autofmt_xdate()
             self.fig_price.tight_layout(); self.canvas_price.draw()
+            full_xlim = mdates.date2num([df.index[0], df.index[-1]])
+            self.zoom_price.register_axes([ax], full_xlim)
 
             # --- Performance tab (Equity + Benchmark + Drawdown) ---
             self.fig_perf.clear()
             ax1 = self.fig_perf.add_subplot(211)
             ax1.plot(bt.index, bt["equity"], label="Strategy")
             ax1.plot(bh.index, bh["bh_equity"], color="gray", linestyle="--", label="Buy & Hold")
+            locator_perf = mdates.AutoDateLocator(minticks=6, maxticks=14)
+            ax1.xaxis.set_major_locator(locator_perf)
+            ax1.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator_perf))
             ax1.set_title("Equity Curve (vs Buy & Hold)")
             ax1.legend(); ax1.grid(True, alpha=0.3)
 
@@ -137,16 +257,31 @@ class TraderDesk(QWidget):
             ax2.plot(bt.index, bt["drawdown"], label="Strategy DD")
             ax2.plot(bh.index, bh["bh_drawdown"], color="gray", linestyle="--", label="B&H DD")
             ax2.set_title("Drawdown Comparison"); ax2.legend(); ax2.grid(True, alpha=0.3)
+            self.fig_perf.autofmt_xdate()
             self.fig_perf.tight_layout(); self.canvas_perf.draw()
+            if not bt.empty:
+                full_xlim_perf = mdates.date2num([bt.index[0], bt.index[-1]])
+                self.zoom_perf.register_axes([ax1, ax2], full_xlim_perf)
 
             self.append_log(
                 f"Strategy  CAGR {stats['CAGR']*100:.2f}%  Sharpe {stats['Sharpe']:.2f}  MaxDD {stats['MaxDD']*100:.2f}%\n"
                 f"Buy&Hold  CAGR {bh_stats['CAGR']*100:.2f}%  Sharpe {bh_stats['Sharpe']:.2f}  MaxDD {bh_stats['MaxDD']*100:.2f}%\n"
             )
+            if not self._zoom_hint_logged:
+                self.append_log("Hold Ctrl and use the mouse wheel to zoom, Shift + wheel to pan, and press R to reset the view.")
+                self._zoom_hint_logged = True
             self.tabs.setCurrentIndex(1)
 
         except Exception as e:
             QMessageBox.critical(self,"Error",str(e))
+
+    def toggle_trade_markers(self):
+        if not self.trade_markers:
+            return
+        show = self.show_trades.isChecked()
+        for marker in self.trade_markers:
+            marker.set_visible(show)
+        self.canvas_price.draw_idle()
 
 def main():
     app = QApplication(sys.argv)
