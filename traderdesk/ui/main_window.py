@@ -27,7 +27,7 @@ from ..backtesting import backtest, evaluate
 from ..benchmark import benchmark
 from ..data import get_data
 from ..live.brokers import PaperBroker
-from ..live.engine import LiveTradingConfig, LiveTradingEngine
+from ..live.engine import LiveTradingConfig, LiveTradingEngine, TradeDecision
 from ..live.providers import YahooMarketDataProvider
 from ..signals import generate_signals
 from .toolbar import NavigationToolbar
@@ -183,12 +183,14 @@ class TraderDesk(QWidget):
             decision = engine.evaluate_and_execute()
             position = self._live_broker.position(ticker).quantity
             action = "TRADE" if decision.should_trade else "SKIP"
+            explanation = self._build_live_explanation(decision, config, position)
             self.append_log(
                 (
                     f"Live {action} for {ticker}: expected {decision.predicted_return:.4f}, "
                     f"confidence {decision.confidence:.2f}, reason={decision.reason}, "
                     f"recommended ${decision.allocated_notional:.2f} at ${decision.last_price:.2f}/share, "
-                    f"target_position={decision.target_position}, current_position={position}"
+                    f"target_position={decision.target_position}, current_position={position}\n"
+                    f"Explanation: {explanation}"
                 )
             )
             if decision.should_trade:
@@ -212,6 +214,51 @@ class TraderDesk(QWidget):
                 )
         except Exception as exc:  # pragma: no cover - handled in UI context
             QMessageBox.critical(self, "Live Trading Error", str(exc))
+
+    # ------------------------------------------------------------------
+    def _build_live_explanation(
+        self,
+        decision: TradeDecision,
+        config: LiveTradingConfig,
+        current_position: int,
+    ) -> str:
+        pct_move = decision.predicted_return * 100
+        pct_threshold = config.trade_threshold * 100
+        pct_confidence = decision.confidence * 100
+
+        if decision.should_trade:
+            direction = "buy" if decision.target_position > 0 else "sell"
+            expectation = "rise" if decision.target_position > 0 else "fall"
+            shares = abs(decision.target_position)
+            delta = decision.target_position - current_position
+            if delta > 0:
+                hold_text = "increase"
+            elif delta < 0:
+                hold_text = "reduce"
+            else:
+                hold_text = "maintain"
+            return (
+                f"The AI expects the price to {expectation} about {pct_move:.2f}% and is {pct_confidence:.0f}% confident. "
+                f"It recommends you {direction} around {shares} share{'s' if shares != 1 else ''} "
+                f"(~${decision.allocated_notional:.2f}) so your position will {hold_text}."
+            )
+
+        if decision.reason == "low confidence":
+            return (
+                f"The model only feels {pct_confidence:.0f}% sure about a {pct_move:.2f}% move, below the "
+                f"{config.min_confidence * 100:.0f}% confidence needed, so it advises waiting."
+            )
+        if decision.reason == "return below threshold":
+            return (
+                f"The predicted move of {pct_move:.2f}% doesn't clear your {pct_threshold:.2f}% trigger, "
+                f"so the safest choice is to stay in cash for now."
+            )
+        if decision.reason == "budget below share price":
+            return (
+                f"The signal fired, but one share costs ${decision.last_price:.2f} and your available budget is "
+                f"${config.max_trade_notional:.2f}, so it can't buy even a single share yet."
+            )
+        return "No trade was placed; review the numbers above for additional details."
 
     # ------------------------------------------------------------------
     # Price tab
