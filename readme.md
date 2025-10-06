@@ -1,7 +1,7 @@
 # 🧠 TraderDesk
 
-**TraderDesk** is a desktop trading research tool built in Python.  
-It lets you visualize and backtest simple trading strategies (like SMA crossovers) using **free market data** from Yahoo Finance.
+**TraderDesk** is a desktop trading research tool built in Python.
+It lets you visualize and backtest simple trading strategies (like SMA crossovers) using **free market data** from Yahoo Finance today, and it is being expanded into an **AI-assisted live-trading workstation**.
 
 ---
 
@@ -16,6 +16,7 @@ Example: SPY with 50/200 SMA crossover
 - 📈 Plot price with customizable moving averages
 - ⚙️ Backtest basic crossover strategies
 - 🧮 Display key performance metrics (CAGR, Sharpe, Sortino, Max Drawdown)
+- 🤖 Prototype AI predictor for next-bar returns and trade confidence
 - 🪟 Simple GUI built with `PySide6`
 
 ---
@@ -63,12 +64,43 @@ pip install -r requirements.txt
 python traderdesk.py
 ```
 
-This project is for learning algorithmic trading — not for live trading or financial advice:
+> ⚠️ **Work in Progress:** TraderDesk is actively evolving toward a live trading platform. The current release focuses on research and backtesting while the team builds out the broker connectivity, execution, and risk controls required for production use.
 
-Fetch and clean market data
+### 🛣️ Live Trading Roadmap Highlights
+- ✅ **Today:** Research workflow with historical market data, signal generation, performance analytics, and an AI predictor powering the live engine prototype.
+- 🚧 **In Development:** Modular execution engine hardening, broker API integration, and real-time data ingestion.
+- 🗓️ **Planned:** Automated risk management, monitoring dashboards, compliance tooling, and multi-asset portfolio coordination for safe live deployment.
 
-Generate trading signals
+### 🧭 What You Can Do Right Now
+- Fetch and clean market data
+- Generate trading signals
+- Backtest strategies with realistic assumptions
+- Interpret performance metrics
+- Experiment with the new AI predictor and paper-broker live trading engine scaffolding
 
-Backtest strategies with realistic assumptions
+---
 
-Interpret performance metrics
+## 🧠 Getting Started with AI-Assisted Live Trading
+
+The `traderdesk.ai` module introduces a lightweight ridge-regression predictor that learns from historical closing prices and estimates the next-bar return with an associated confidence score. The live trading prototype wires this predictor into a modular engine that can be pointed at a real broker once credentials and compliance checks are ready.
+
+```python
+from traderdesk import (
+    AIPredictor,
+    LiveTradingConfig,
+    LiveTradingEngine,
+    PaperBroker,
+    YahooMarketDataProvider,
+)
+
+config = LiveTradingConfig(ticker="SPY", trade_threshold=0.0015, trade_size=10)
+predictor = AIPredictor(lookback=30)
+data_provider = YahooMarketDataProvider()
+broker = PaperBroker()
+
+engine = LiveTradingEngine(config, predictor, data_provider, broker)
+decision = engine.evaluate_and_execute()
+print(decision)
+```
+
+> ⚠️ **Important:** The live trading components currently target a paper broker and do not handle order routing, authentication, or regulatory checks. They are meant for experimentation while the production integrations are being built.
