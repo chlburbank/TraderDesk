@@ -22,9 +22,13 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import pandas as pd
 
+from ..ai import AIPredictor
 from ..backtesting import backtest, evaluate
 from ..benchmark import benchmark
 from ..data import get_data
+from ..live.brokers import PaperBroker
+from ..live.engine import LiveTradingConfig, LiveTradingEngine, TradeDecision
+from ..live.providers import YahooMarketDataProvider
 from ..signals import generate_signals
 from .toolbar import NavigationToolbar
 from .zoom import CtrlScrollZoom
@@ -46,6 +50,8 @@ class TraderDesk(QWidget):
         self.show_trades = QCheckBox("Show trades on chart")
         self.show_trades.setChecked(True)
         self.btn_plot = QPushButton("Plot & Backtest")
+        self.btn_live = QPushButton("AI Evaluate & Trade")
+        self.live_amount = QLineEdit("1000")
         self.log = QTextEdit()
         self.log.setReadOnly(True)
 
@@ -73,11 +79,16 @@ class TraderDesk(QWidget):
         self._build_layout()
         self.btn_plot.clicked.connect(self.plot_and_backtest)
         self.show_trades.stateChanged.connect(self.toggle_trade_markers)
+        self.btn_live.clicked.connect(self.run_live_trade)
 
         self.trade_markers: list = []
         self.zoom_price = CtrlScrollZoom(self.canvas_price)
         self.zoom_perf = CtrlScrollZoom(self.canvas_perf)
         self._zoom_hint_logged = False
+
+        self._live_predictor = AIPredictor()
+        self._live_data_provider = YahooMarketDataProvider()
+        self._live_broker = PaperBroker()
 
     # ------------------------------------------------------------------
     # Layout helpers
@@ -95,8 +106,15 @@ class TraderDesk(QWidget):
         top.addWidget(self.show_trades)
         top.addWidget(self.btn_plot)
 
+        live_row = QHBoxLayout()
+        live_row.addWidget(QLabel("Investment Budget ($):"))
+        live_row.addWidget(self.live_amount)
+        live_row.addStretch()
+        live_row.addWidget(self.btn_live)
+
         layout = QVBoxLayout()
         layout.addLayout(top)
+        layout.addLayout(live_row)
         layout.addWidget(self.tabs)
         layout.addWidget(QLabel("Backtest / Logs"))
         layout.addWidget(self.log)
@@ -142,6 +160,133 @@ class TraderDesk(QWidget):
     ) -> pd.DataFrame:
         df = get_data(ticker, start, end)
         return generate_signals(df, fast, slow)
+
+    # ------------------------------------------------------------------
+    # Live trading
+    def run_live_trade(self) -> None:
+        try:
+            ticker = self.ticker_input.text().strip().upper()
+            budget = float(self.live_amount.text())
+            if budget <= 0:
+                raise ValueError("Investment budget must be greater than zero")
+
+            previous_position = self._live_broker.position(ticker).quantity
+            config = LiveTradingConfig(
+                ticker=ticker,
+                max_trade_notional=budget,
+            )
+            engine = LiveTradingEngine(
+                config=config,
+                predictor=self._live_predictor,
+                data_provider=self._live_data_provider,
+                broker=self._live_broker,
+            )
+            decision = engine.evaluate_and_execute()
+            position = self._live_broker.position(ticker).quantity
+            action = "TRADE" if decision.should_trade else "SKIP"
+            explanation = self._build_live_explanation(decision, config, previous_position)
+            log_lines = [
+                f"Live {action} for {ticker}",
+                f"Expected move: {decision.predicted_return * 100:.2f}%",
+                f"Confidence: {decision.confidence * 100:.0f}% ({decision.confidence:.2f})",
+                f"Reason: {decision.reason}",
+                (
+                    "Recommended spend: "
+                    f"${decision.allocated_notional:.2f} at ${decision.last_price:.2f} per share"
+                ),
+                (
+                    f"Target position: {decision.target_position} | "
+                    f"Current position: {position}"
+                ),
+                f"Guidance: {explanation}",
+                "",
+            ]
+            self.append_log("\n".join(log_lines))
+            if decision.should_trade:
+                QMessageBox.information(
+                    self,
+                    "Live Trade Executed",
+                    (
+                        f"Executed target position {decision.target_position} for {ticker}.\n"
+                        f"Approximate notional: ${decision.allocated_notional:.2f}.\n"
+                        f"Current position: {position}.\n\n"
+                        f"{explanation}"
+                    ),
+                )
+            elif decision.reason == "budget below share price":
+                QMessageBox.information(
+                    self,
+                    "Budget Too Low",
+                    (
+                        "The AI signal fired, but the investment budget is below the price of a single share.\n"
+                        "Increase the budget or choose a lower-priced asset to allow execution."
+                    ),
+                )
+        except Exception as exc:  # pragma: no cover - handled in UI context
+            QMessageBox.critical(self, "Live Trading Error", str(exc))
+
+    # ------------------------------------------------------------------
+    def _build_live_explanation(
+        self,
+        decision: TradeDecision,
+        config: LiveTradingConfig,
+        previous_position: int,
+    ) -> str:
+        pct_move = decision.predicted_return * 100
+        pct_threshold = config.trade_threshold * 100
+        pct_confidence = decision.confidence * 100
+
+        if decision.should_trade:
+            expectation = "rise" if decision.target_position >= 0 else "fall"
+            shares_to_trade = abs(decision.target_position - previous_position)
+            final_shares = abs(decision.target_position)
+            if shares_to_trade == 0:
+                action_sentence = (
+                    f"hold your {final_shares} share{'s' if final_shares != 1 else ''} until the AI "
+                    "updates its guidance"
+                )
+            elif decision.target_position > previous_position:
+                action_sentence = (
+                    f"buy {shares_to_trade} share{'s' if shares_to_trade != 1 else ''} now, ending with "
+                    f"{final_shares} share{'s' if final_shares != 1 else ''} in your account"
+                )
+            else:
+                if decision.target_position <= 0 < previous_position:
+                    action_sentence = (
+                        f"sell {shares_to_trade} share{'s' if shares_to_trade != 1 else ''} to move out of "
+                        "the position for now"
+                    )
+                elif decision.target_position < 0:
+                    action_sentence = (
+                        f"sell {shares_to_trade} share{'s' if shares_to_trade != 1 else ''} so you end up short "
+                        f"{final_shares} share{'s' if final_shares != 1 else ''}"
+                    )
+                else:
+                    action_sentence = (
+                        f"sell {shares_to_trade} share{'s' if shares_to_trade != 1 else ''} to settle at "
+                        f"{final_shares} share{'s' if final_shares != 1 else ''}"
+                    )
+            return (
+                f"The AI expects the price to {expectation} about {pct_move:.2f}% and feels roughly "
+                f"{pct_confidence:.0f}% sure. Recommendation: {action_sentence} (~${decision.allocated_notional:.2f} committed)."
+            )
+
+        if decision.reason == "low confidence":
+            return (
+                f"The model only feels {pct_confidence:.0f}% sure about a {pct_move:.2f}% move—below the "
+                f"{config.min_confidence * 100:.0f}% confidence needed—so it suggests waiting for a clearer setup."
+            )
+        if decision.reason == "return below threshold":
+            return (
+                f"The predicted move of {pct_move:.2f}% doesn't clear your {pct_threshold:.2f}% trigger, "
+                f"so the safest choice is to stay in cash for now."
+            )
+        if decision.reason == "budget below share price":
+            return (
+                f"The signal fired, but one share costs ${decision.last_price:.2f} and your available budget is "
+                f"${config.max_trade_notional:.2f}, so add funds or pick a lower-priced asset before trading."
+            )
+        return "No trade was placed; stay in cash and check back when the AI provides a clearer recommendation."
 
     # ------------------------------------------------------------------
     # Price tab
