@@ -170,6 +170,7 @@ class TraderDesk(QWidget):
             if budget <= 0:
                 raise ValueError("Investment budget must be greater than zero")
 
+            previous_position = self._live_broker.position(ticker).quantity
             config = LiveTradingConfig(
                 ticker=ticker,
                 max_trade_notional=budget,
@@ -183,16 +184,24 @@ class TraderDesk(QWidget):
             decision = engine.evaluate_and_execute()
             position = self._live_broker.position(ticker).quantity
             action = "TRADE" if decision.should_trade else "SKIP"
-            explanation = self._build_live_explanation(decision, config, position)
-            self.append_log(
+            explanation = self._build_live_explanation(decision, config, previous_position)
+            log_lines = [
+                f"Live {action} for {ticker}",
+                f"Expected move: {decision.predicted_return * 100:.2f}%",
+                f"Confidence: {decision.confidence * 100:.0f}% ({decision.confidence:.2f})",
+                f"Reason: {decision.reason}",
                 (
-                    f"Live {action} for {ticker}: expected {decision.predicted_return:.4f}, "
-                    f"confidence {decision.confidence:.2f}, reason={decision.reason}, "
-                    f"recommended ${decision.allocated_notional:.2f} at ${decision.last_price:.2f}/share, "
-                    f"target_position={decision.target_position}, current_position={position}\n"
-                    f"Explanation: {explanation}"
-                )
-            )
+                    "Recommended spend: "
+                    f"${decision.allocated_notional:.2f} at ${decision.last_price:.2f} per share"
+                ),
+                (
+                    f"Target position: {decision.target_position} | "
+                    f"Current position: {position}"
+                ),
+                f"Guidance: {explanation}",
+                "",
+            ]
+            self.append_log("\n".join(log_lines))
             if decision.should_trade:
                 QMessageBox.information(
                     self,
@@ -200,7 +209,8 @@ class TraderDesk(QWidget):
                     (
                         f"Executed target position {decision.target_position} for {ticker}.\n"
                         f"Approximate notional: ${decision.allocated_notional:.2f}.\n"
-                        f"Current position: {position}"
+                        f"Current position: {position}.\n\n"
+                        f"{explanation}"
                     ),
                 )
             elif decision.reason == "budget below share price":
@@ -220,33 +230,51 @@ class TraderDesk(QWidget):
         self,
         decision: TradeDecision,
         config: LiveTradingConfig,
-        current_position: int,
+        previous_position: int,
     ) -> str:
         pct_move = decision.predicted_return * 100
         pct_threshold = config.trade_threshold * 100
         pct_confidence = decision.confidence * 100
 
         if decision.should_trade:
-            direction = "buy" if decision.target_position > 0 else "sell"
-            expectation = "rise" if decision.target_position > 0 else "fall"
-            shares = abs(decision.target_position)
-            delta = decision.target_position - current_position
-            if delta > 0:
-                hold_text = "increase"
-            elif delta < 0:
-                hold_text = "reduce"
+            expectation = "rise" if decision.target_position >= 0 else "fall"
+            shares_to_trade = abs(decision.target_position - previous_position)
+            final_shares = abs(decision.target_position)
+            if shares_to_trade == 0:
+                action_sentence = (
+                    f"hold your {final_shares} share{'s' if final_shares != 1 else ''} until the AI "
+                    "updates its guidance"
+                )
+            elif decision.target_position > previous_position:
+                action_sentence = (
+                    f"buy {shares_to_trade} share{'s' if shares_to_trade != 1 else ''} now, ending with "
+                    f"{final_shares} share{'s' if final_shares != 1 else ''} in your account"
+                )
             else:
-                hold_text = "maintain"
+                if decision.target_position <= 0 < previous_position:
+                    action_sentence = (
+                        f"sell {shares_to_trade} share{'s' if shares_to_trade != 1 else ''} to move out of "
+                        "the position for now"
+                    )
+                elif decision.target_position < 0:
+                    action_sentence = (
+                        f"sell {shares_to_trade} share{'s' if shares_to_trade != 1 else ''} so you end up short "
+                        f"{final_shares} share{'s' if final_shares != 1 else ''}"
+                    )
+                else:
+                    action_sentence = (
+                        f"sell {shares_to_trade} share{'s' if shares_to_trade != 1 else ''} to settle at "
+                        f"{final_shares} share{'s' if final_shares != 1 else ''}"
+                    )
             return (
-                f"The AI expects the price to {expectation} about {pct_move:.2f}% and is {pct_confidence:.0f}% confident. "
-                f"It recommends you {direction} around {shares} share{'s' if shares != 1 else ''} "
-                f"(~${decision.allocated_notional:.2f}) so your position will {hold_text}."
+                f"The AI expects the price to {expectation} about {pct_move:.2f}% and feels roughly "
+                f"{pct_confidence:.0f}% sure. Recommendation: {action_sentence} (~${decision.allocated_notional:.2f} committed)."
             )
 
         if decision.reason == "low confidence":
             return (
-                f"The model only feels {pct_confidence:.0f}% sure about a {pct_move:.2f}% move, below the "
-                f"{config.min_confidence * 100:.0f}% confidence needed, so it advises waiting."
+                f"The model only feels {pct_confidence:.0f}% sure about a {pct_move:.2f}% move—below the "
+                f"{config.min_confidence * 100:.0f}% confidence needed—so it suggests waiting for a clearer setup."
             )
         if decision.reason == "return below threshold":
             return (
@@ -256,9 +284,9 @@ class TraderDesk(QWidget):
         if decision.reason == "budget below share price":
             return (
                 f"The signal fired, but one share costs ${decision.last_price:.2f} and your available budget is "
-                f"${config.max_trade_notional:.2f}, so it can't buy even a single share yet."
+                f"${config.max_trade_notional:.2f}, so add funds or pick a lower-priced asset before trading."
             )
-        return "No trade was placed; review the numbers above for additional details."
+        return "No trade was placed; stay in cash and check back when the AI provides a clearer recommendation."
 
     # ------------------------------------------------------------------
     # Price tab
