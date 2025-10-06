@@ -22,9 +22,13 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import pandas as pd
 
+from ..ai import AIPredictor
 from ..backtesting import backtest, evaluate
 from ..benchmark import benchmark
 from ..data import get_data
+from ..live.brokers import PaperBroker
+from ..live.engine import LiveTradingConfig, LiveTradingEngine
+from ..live.providers import YahooMarketDataProvider
 from ..signals import generate_signals
 from .toolbar import NavigationToolbar
 from .zoom import CtrlScrollZoom
@@ -46,6 +50,11 @@ class TraderDesk(QWidget):
         self.show_trades = QCheckBox("Show trades on chart")
         self.show_trades.setChecked(True)
         self.btn_plot = QPushButton("Plot & Backtest")
+        self.btn_live = QPushButton("AI Evaluate & Trade")
+        self.live_lookback = QLineEdit("120")
+        self.live_confidence = QLineEdit("0.40")
+        self.live_threshold = QLineEdit("0.001")
+        self.live_size = QLineEdit("1")
         self.log = QTextEdit()
         self.log.setReadOnly(True)
 
@@ -73,11 +82,16 @@ class TraderDesk(QWidget):
         self._build_layout()
         self.btn_plot.clicked.connect(self.plot_and_backtest)
         self.show_trades.stateChanged.connect(self.toggle_trade_markers)
+        self.btn_live.clicked.connect(self.run_live_trade)
 
         self.trade_markers: list = []
         self.zoom_price = CtrlScrollZoom(self.canvas_price)
         self.zoom_perf = CtrlScrollZoom(self.canvas_perf)
         self._zoom_hint_logged = False
+
+        self._live_predictor = AIPredictor()
+        self._live_data_provider = YahooMarketDataProvider()
+        self._live_broker = PaperBroker()
 
     # ------------------------------------------------------------------
     # Layout helpers
@@ -95,8 +109,20 @@ class TraderDesk(QWidget):
         top.addWidget(self.show_trades)
         top.addWidget(self.btn_plot)
 
+        live_row = QHBoxLayout()
+        live_row.addWidget(QLabel("Lookback:"))
+        live_row.addWidget(self.live_lookback)
+        live_row.addWidget(QLabel("Min Confidence:"))
+        live_row.addWidget(self.live_confidence)
+        live_row.addWidget(QLabel("Return Threshold:"))
+        live_row.addWidget(self.live_threshold)
+        live_row.addWidget(QLabel("Trade Size:"))
+        live_row.addWidget(self.live_size)
+        live_row.addWidget(self.btn_live)
+
         layout = QVBoxLayout()
         layout.addLayout(top)
+        layout.addLayout(live_row)
         layout.addWidget(self.tabs)
         layout.addWidget(QLabel("Backtest / Logs"))
         layout.addWidget(self.log)
@@ -142,6 +168,51 @@ class TraderDesk(QWidget):
     ) -> pd.DataFrame:
         df = get_data(ticker, start, end)
         return generate_signals(df, fast, slow)
+
+    # ------------------------------------------------------------------
+    # Live trading
+    def run_live_trade(self) -> None:
+        try:
+            ticker = self.ticker_input.text().strip().upper()
+            lookback = int(self.live_lookback.text())
+            min_conf = float(self.live_confidence.text())
+            threshold = float(self.live_threshold.text())
+            trade_size = int(self.live_size.text())
+
+            config = LiveTradingConfig(
+                ticker=ticker,
+                lookback_days=lookback,
+                min_confidence=min_conf,
+                trade_threshold=threshold,
+                trade_size=trade_size,
+            )
+            engine = LiveTradingEngine(
+                config=config,
+                predictor=self._live_predictor,
+                data_provider=self._live_data_provider,
+                broker=self._live_broker,
+            )
+            decision = engine.evaluate_and_execute()
+            position = self._live_broker.position(ticker).quantity
+            action = "TRADE" if decision.should_trade else "SKIP"
+            self.append_log(
+                (
+                    f"Live {action} for {ticker}: expected {decision.predicted_return:.4f}, "
+                    f"confidence {decision.confidence:.2f}, reason={decision.reason}, "
+                    f"target_position={decision.target_position}, current_position={position}"
+                )
+            )
+            if decision.should_trade:
+                QMessageBox.information(
+                    self,
+                    "Live Trade Executed",
+                    (
+                        f"Executed target position {decision.target_position} for {ticker}.\n"
+                        f"Current position: {position}"
+                    ),
+                )
+        except Exception as exc:  # pragma: no cover - handled in UI context
+            QMessageBox.critical(self, "Live Trading Error", str(exc))
 
     # ------------------------------------------------------------------
     # Price tab
