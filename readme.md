@@ -16,7 +16,7 @@ Example: SPY with 50/200 SMA crossover
 - 📈 Plot price with customizable moving averages
 - ⚙️ Backtest basic crossover strategies
 - 🧮 Display key performance metrics (CAGR, Sharpe, Sortino, Max Drawdown)
-- 🤖 Prototype AI predictor for next-bar returns and trade confidence
+- 🤖 Prototype AI predictor for next-bar returns, confidence, and position sizing guidance
 - 🪟 Simple GUI built with `PySide6`
 
 ---
@@ -93,8 +93,8 @@ from traderdesk import (
     YahooMarketDataProvider,
 )
 
-config = LiveTradingConfig(ticker="SPY", trade_threshold=0.0015, trade_size=10)
-predictor = AIPredictor(lookback=30)
+config = LiveTradingConfig(ticker="SPY", max_trade_notional=1000)
+predictor = AIPredictor()
 data_provider = YahooMarketDataProvider()
 broker = PaperBroker()
 
@@ -102,5 +102,17 @@ engine = LiveTradingEngine(config, predictor, data_provider, broker)
 decision = engine.evaluate_and_execute()
 print(decision)
 ```
+
+When the AI signal meets the built-in thresholds, the engine allocates up to the specified
+`max_trade_notional` based on a blend of expected return strength and confidence, so you receive a
+ready-to-execute share count without tuning expert parameters.
+
+### 🖥️ One-Click AI Trades in the UI
+
+Inside the Qt application you only provide a ticker and an **Investment Budget ($)**. Pressing
+**AI Evaluate & Trade** runs the same engine as above, logs the forecast, and (when conditions are
+met) sends a paper-trade order sized automatically by the AI model. If the budget is too small to
+buy at least one share, the app will prompt you to raise it or pick a lower-priced asset—no expert
+settings required.
 
 > ⚠️ **Important:** The live trading components currently target a paper broker and do not handle order routing, authentication, or regulatory checks. They are meant for experimentation while the production integrations are being built.

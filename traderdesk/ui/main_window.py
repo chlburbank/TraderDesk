@@ -51,10 +51,7 @@ class TraderDesk(QWidget):
         self.show_trades.setChecked(True)
         self.btn_plot = QPushButton("Plot & Backtest")
         self.btn_live = QPushButton("AI Evaluate & Trade")
-        self.live_lookback = QLineEdit("120")
-        self.live_confidence = QLineEdit("0.40")
-        self.live_threshold = QLineEdit("0.001")
-        self.live_size = QLineEdit("1")
+        self.live_amount = QLineEdit("1000")
         self.log = QTextEdit()
         self.log.setReadOnly(True)
 
@@ -110,14 +107,9 @@ class TraderDesk(QWidget):
         top.addWidget(self.btn_plot)
 
         live_row = QHBoxLayout()
-        live_row.addWidget(QLabel("Lookback:"))
-        live_row.addWidget(self.live_lookback)
-        live_row.addWidget(QLabel("Min Confidence:"))
-        live_row.addWidget(self.live_confidence)
-        live_row.addWidget(QLabel("Return Threshold:"))
-        live_row.addWidget(self.live_threshold)
-        live_row.addWidget(QLabel("Trade Size:"))
-        live_row.addWidget(self.live_size)
+        live_row.addWidget(QLabel("Investment Budget ($):"))
+        live_row.addWidget(self.live_amount)
+        live_row.addStretch()
         live_row.addWidget(self.btn_live)
 
         layout = QVBoxLayout()
@@ -174,17 +166,13 @@ class TraderDesk(QWidget):
     def run_live_trade(self) -> None:
         try:
             ticker = self.ticker_input.text().strip().upper()
-            lookback = int(self.live_lookback.text())
-            min_conf = float(self.live_confidence.text())
-            threshold = float(self.live_threshold.text())
-            trade_size = int(self.live_size.text())
+            budget = float(self.live_amount.text())
+            if budget <= 0:
+                raise ValueError("Investment budget must be greater than zero")
 
             config = LiveTradingConfig(
                 ticker=ticker,
-                lookback_days=lookback,
-                min_confidence=min_conf,
-                trade_threshold=threshold,
-                trade_size=trade_size,
+                max_trade_notional=budget,
             )
             engine = LiveTradingEngine(
                 config=config,
@@ -199,6 +187,7 @@ class TraderDesk(QWidget):
                 (
                     f"Live {action} for {ticker}: expected {decision.predicted_return:.4f}, "
                     f"confidence {decision.confidence:.2f}, reason={decision.reason}, "
+                    f"recommended ${decision.allocated_notional:.2f} at ${decision.last_price:.2f}/share, "
                     f"target_position={decision.target_position}, current_position={position}"
                 )
             )
@@ -208,7 +197,17 @@ class TraderDesk(QWidget):
                     "Live Trade Executed",
                     (
                         f"Executed target position {decision.target_position} for {ticker}.\n"
+                        f"Approximate notional: ${decision.allocated_notional:.2f}.\n"
                         f"Current position: {position}"
+                    ),
+                )
+            elif decision.reason == "budget below share price":
+                QMessageBox.information(
+                    self,
+                    "Budget Too Low",
+                    (
+                        "The AI signal fired, but the investment budget is below the price of a single share.\n"
+                        "Increase the budget or choose a lower-priced asset to allow execution."
                     ),
                 )
         except Exception as exc:  # pragma: no cover - handled in UI context
