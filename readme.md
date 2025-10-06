@@ -1,7 +1,7 @@
 # 🧠 TraderDesk
 
-**TraderDesk** is a desktop trading research tool built in Python.  
-It lets you visualize and backtest simple trading strategies (like SMA crossovers) using **free market data** from Yahoo Finance.
+**TraderDesk** is a desktop trading research tool built in Python.
+It lets you visualize and backtest simple trading strategies (like SMA crossovers) using **free market data** from Yahoo Finance today, and it is being expanded into a full live-trading workstation.
 
 ---
 
@@ -63,12 +63,15 @@ pip install -r requirements.txt
 python traderdesk.py
 ```
 
-This project is for learning algorithmic trading — not for live trading or financial advice:
+> ⚠️ **Work in Progress:** TraderDesk is actively evolving toward a live trading platform. The current release focuses on research and backtesting while the team builds out the broker connectivity, execution, and risk controls required for production use.
 
-Fetch and clean market data
+### 🛣️ Live Trading Roadmap Highlights
+- ✅ **Today:** Research workflow with historical market data, signal generation, and performance analytics.
+- 🚧 **In Development:** Modular execution engine, broker API integration, and real-time data ingestion.
+- 🗓️ **Planned:** Automated risk management, monitoring dashboards, and compliance tooling for safe live deployment.
 
-Generate trading signals
-
-Backtest strategies with realistic assumptions
-
-Interpret performance metrics
+### 🧭 What You Can Do Right Now
+- Fetch and clean market data
+- Generate trading signals
+- Backtest strategies with realistic assumptions
+- Interpret performance metrics
