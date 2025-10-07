@@ -77,9 +77,13 @@ class AIPredictor:
         ridge = XtX + self.regularization * np.identity(XtX.shape[0])
         XtY = X.T @ y
         weights = np.linalg.solve(ridge, XtY)
-        bias = y.mean() - weights.mean()
+        # The intercept should recenter predictions relative to the mean of the
+        # training features. Using the feature mean instead of ``weights.mean``
+        # prevents runaway offsets when the per-feature scales differ.
+        feature_mean = X.mean(axis=0)
+        bias = float(y.mean() - feature_mean @ weights)
         self._weights = weights
-        self._bias = float(bias)
+        self._bias = bias
         # Provide a backtest-style in-sample prediction for transparency.
         mean_pred = float((X @ weights + bias).mean())
         variance = float(np.var(y - (X @ weights + bias))) if len(y) > 1 else 0.0
