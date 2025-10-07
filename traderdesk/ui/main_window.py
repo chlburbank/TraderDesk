@@ -25,7 +25,7 @@ import pandas as pd
 from ..ai import AIPredictor
 from ..backtesting import backtest, evaluate
 from ..benchmark import benchmark
-from ..data import get_data
+from ..data import get_crypto_intraday, get_data
 from ..live.brokers import PaperBroker
 from ..live.engine import LiveTradingConfig, LiveTradingEngine, TradeDecision
 from ..live.providers import YahooMarketDataProvider
@@ -76,17 +76,51 @@ class TraderDesk(QWidget):
         perf_tab.setLayout(perf_layout)
         self.tabs.addTab(perf_tab, "Performance")
 
+        self.crypto_symbol_input = QLineEdit("BTC-USD")
+        self.crypto_period_input = QLineEdit("7d")
+        self.crypto_interval_input = QLineEdit("15m")
+        self.btn_crypto = QPushButton("Load Crypto Data")
+        self.crypto_prediction = QLabel("AI Prediction: –")
+        self.crypto_prediction.setWordWrap(True)
+
+        self.fig_crypto = Figure(figsize=(8, 5))
+        self.canvas_crypto = FigureCanvas(self.fig_crypto)
+        self.toolbar_crypto = NavigationToolbar(self.canvas_crypto, self)
+        crypto_tab = QWidget()
+        self.crypto_tab = crypto_tab
+        crypto_layout = QVBoxLayout()
+        crypto_controls = QHBoxLayout()
+        for lbl, widget in [
+            ("Symbol:", self.crypto_symbol_input),
+            ("Period:", self.crypto_period_input),
+            ("Interval:", self.crypto_interval_input),
+        ]:
+            crypto_controls.addWidget(QLabel(lbl))
+            crypto_controls.addWidget(widget)
+        crypto_controls.addStretch()
+        crypto_controls.addWidget(self.btn_crypto)
+        crypto_layout.addLayout(crypto_controls)
+        crypto_layout.addWidget(self.toolbar_crypto)
+        crypto_layout.addWidget(self.canvas_crypto)
+        self.crypto_prediction.setAlignment(Qt.AlignCenter)
+        crypto_layout.addWidget(self.crypto_prediction)
+        crypto_tab.setLayout(crypto_layout)
+        self.tabs.addTab(crypto_tab, "Crypto Day Trading")
+
         self._build_layout()
         self.btn_plot.clicked.connect(self.plot_and_backtest)
         self.show_trades.stateChanged.connect(self.toggle_trade_markers)
         self.btn_live.clicked.connect(self.run_live_trade)
+        self.btn_crypto.clicked.connect(self.load_crypto_day_trading)
 
         self.trade_markers: list = []
         self.zoom_price = CtrlScrollZoom(self.canvas_price)
         self.zoom_perf = CtrlScrollZoom(self.canvas_perf)
+        self.zoom_crypto = CtrlScrollZoom(self.canvas_crypto)
         self._zoom_hint_logged = False
 
         self._live_predictor = AIPredictor()
+        self._crypto_predictor = AIPredictor(lookback=30)
         self._live_data_provider = YahooMarketDataProvider()
         self._live_broker = PaperBroker()
 
@@ -119,6 +153,82 @@ class TraderDesk(QWidget):
         layout.addWidget(QLabel("Backtest / Logs"))
         layout.addWidget(self.log)
         self.setLayout(layout)
+
+    # ------------------------------------------------------------------
+    # Crypto day-trading helpers
+    def load_crypto_day_trading(self) -> None:
+        try:
+            symbol = self.crypto_symbol_input.text().strip().upper()
+            period = self.crypto_period_input.text().strip() or "7d"
+            interval = self.crypto_interval_input.text().strip() or "15m"
+
+            df = get_crypto_intraday(symbol, period=period, interval=interval)
+            if "Close" not in df.columns:
+                raise ValueError("Crypto data missing Close prices")
+
+            self._update_crypto_chart(df, symbol, interval)
+
+            closes = df["Close"]
+            self._crypto_predictor.fit(closes)
+            prediction = self._crypto_predictor.predict(closes)
+            direction = prediction.direction
+            direction_label = {1: "Bullish", -1: "Bearish", 0: "Neutral"}[direction]
+            move_pct = prediction.expected_return * 100
+            confidence_pct = prediction.confidence * 100
+            guidance = self._summarize_crypto_prediction(direction, move_pct, confidence_pct)
+            text = (
+                f"AI Prediction: {direction_label} (~{move_pct:.2f}% expected next move, "
+                f"confidence {confidence_pct:.0f}%)"
+            )
+            self.crypto_prediction.setText(f"{text}\n{guidance}")
+            self.append_log(
+                (
+                    f"Crypto {symbol}: {text} using {len(closes)} bars at {interval} interval. "
+                    f"Guidance: {guidance}"
+                )
+            )
+            self.tabs.setCurrentWidget(self.crypto_tab)
+        except Exception as exc:  # pragma: no cover - handled in UI context
+            QMessageBox.critical(self, "Error", str(exc))
+
+    def _update_crypto_chart(self, df: pd.DataFrame, symbol: str, interval: str) -> None:
+        self.fig_crypto.clear()
+        ax = self.fig_crypto.add_subplot(111)
+        close = df["Close"]
+        ax.plot(df.index, close, label="Close", color="#1f77b4")
+        rolling = close.rolling(20, min_periods=1).mean()
+        ax.plot(df.index, rolling, label="MA(20)", color="#ff7f0e", linestyle="--")
+        ax.set_title(f"{symbol} Intraday ({interval})")
+        ax.set_ylabel("Price (USD)")
+        ax.grid(True, linestyle="--", alpha=0.3)
+        ax.legend(loc="upper left")
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d %H:%M"))
+        self.fig_crypto.autofmt_xdate()
+        self.canvas_crypto.draw_idle()
+
+    def _summarize_crypto_prediction(
+        self, direction: int, move_pct: float, confidence_pct: float
+    ) -> str:
+        """Translate the crypto AI signal into a plain-language takeaway."""
+
+        confidence_level = (
+            "low" if confidence_pct < 33 else "moderate" if confidence_pct < 67 else "high"
+        )
+
+        if direction > 0:
+            return (
+                f"Outlook: upward bias. Expect roughly a {move_pct:.2f}% pop. "
+                f"Confidence feels {confidence_level}; consider buying or holding a long position."
+            )
+        if direction < 0:
+            return (
+                f"Outlook: downward pressure. Expect roughly a {abs(move_pct):.2f}% dip. "
+                f"Confidence feels {confidence_level}; consider tightening stops or lightening exposure."
+            )
+        return (
+            "Outlook: sideways. The model sees no clear edge right now, so staying on the sidelines "
+            "or holding steady is reasonable."
+        )
 
     # ------------------------------------------------------------------
     # Logging utilities

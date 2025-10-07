@@ -77,9 +77,13 @@ class AIPredictor:
         ridge = XtX + self.regularization * np.identity(XtX.shape[0])
         XtY = X.T @ y
         weights = np.linalg.solve(ridge, XtY)
-        bias = y.mean() - weights.mean()
+        # The intercept should recenter predictions relative to the mean of the
+        # training features. Using the feature mean instead of ``weights.mean``
+        # prevents runaway offsets when the per-feature scales differ.
+        feature_mean = X.mean(axis=0)
+        bias = float(y.mean() - feature_mean @ weights)
         self._weights = weights
-        self._bias = float(bias)
+        self._bias = bias
         # Provide a backtest-style in-sample prediction for transparency.
         mean_pred = float((X @ weights + bias).mean())
         variance = float(np.var(y - (X @ weights + bias))) if len(y) > 1 else 0.0
@@ -93,12 +97,15 @@ class AIPredictor:
         """Predict the next-bar return from closing prices."""
 
         series = self._to_series(closes)
-        if len(series) < self.lookback:
+        if len(series) <= self.lookback:
             raise ValueError("not enough history to predict")
         if not self.is_trained():
             self.fit(series)
+        returns = series.pct_change().dropna()
+        if len(returns) < self.lookback:
+            raise ValueError("not enough return history to predict")
         assert self._weights is not None
-        window = series.iloc[-self.lookback :]
+        window = returns.iloc[-self.lookback :]
         features = window.to_numpy()
         expected = float(features @ self._weights + self._bias)
         # Confidence decays with prediction magnitude relative to historical dispersion.
