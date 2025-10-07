@@ -97,12 +97,15 @@ class AIPredictor:
         """Predict the next-bar return from closing prices."""
 
         series = self._to_series(closes)
-        if len(series) < self.lookback:
+        if len(series) <= self.lookback:
             raise ValueError("not enough history to predict")
         if not self.is_trained():
             self.fit(series)
+        returns = series.pct_change().dropna()
+        if len(returns) < self.lookback:
+            raise ValueError("not enough return history to predict")
         assert self._weights is not None
-        window = series.iloc[-self.lookback :]
+        window = returns.iloc[-self.lookback :]
         features = window.to_numpy()
         expected = float(features @ self._weights + self._bias)
         # Confidence decays with prediction magnitude relative to historical dispersion.
