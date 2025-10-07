@@ -81,6 +81,7 @@ class TraderDesk(QWidget):
         self.crypto_interval_input = QLineEdit("15m")
         self.btn_crypto = QPushButton("Load Crypto Data")
         self.crypto_prediction = QLabel("AI Prediction: –")
+        self.crypto_prediction.setWordWrap(True)
 
         self.fig_crypto = Figure(figsize=(8, 5))
         self.canvas_crypto = FigureCanvas(self.fig_crypto)
@@ -170,16 +171,21 @@ class TraderDesk(QWidget):
             closes = df["Close"]
             self._crypto_predictor.fit(closes)
             prediction = self._crypto_predictor.predict(closes)
-            direction = {1: "Bullish", -1: "Bearish", 0: "Neutral"}[
-                prediction.direction
-            ]
+            direction = prediction.direction
+            direction_label = {1: "Bullish", -1: "Bearish", 0: "Neutral"}[direction]
+            move_pct = prediction.expected_return * 100
+            confidence_pct = prediction.confidence * 100
+            guidance = self._summarize_crypto_prediction(direction, move_pct, confidence_pct)
             text = (
-                f"AI Prediction: {direction} ({prediction.expected_return:.4%}"
-                f" expected next move, confidence {prediction.confidence:.2f})"
+                f"AI Prediction: {direction_label} (~{move_pct:.2f}% expected next move, "
+                f"confidence {confidence_pct:.0f}%)"
             )
-            self.crypto_prediction.setText(text)
+            self.crypto_prediction.setText(f"{text}\n{guidance}")
             self.append_log(
-                f"Crypto {symbol}: {text} using {len(closes)} bars at {interval} interval"
+                (
+                    f"Crypto {symbol}: {text} using {len(closes)} bars at {interval} interval. "
+                    f"Guidance: {guidance}"
+                )
             )
             self.tabs.setCurrentWidget(self.crypto_tab)
         except Exception as exc:  # pragma: no cover - handled in UI context
@@ -199,6 +205,30 @@ class TraderDesk(QWidget):
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d %H:%M"))
         self.fig_crypto.autofmt_xdate()
         self.canvas_crypto.draw_idle()
+
+    def _summarize_crypto_prediction(
+        self, direction: int, move_pct: float, confidence_pct: float
+    ) -> str:
+        """Translate the crypto AI signal into a plain-language takeaway."""
+
+        confidence_level = (
+            "low" if confidence_pct < 33 else "moderate" if confidence_pct < 67 else "high"
+        )
+
+        if direction > 0:
+            return (
+                f"Outlook: upward bias. Expect roughly a {move_pct:.2f}% pop. "
+                f"Confidence feels {confidence_level}; consider buying or holding a long position."
+            )
+        if direction < 0:
+            return (
+                f"Outlook: downward pressure. Expect roughly a {abs(move_pct):.2f}% dip. "
+                f"Confidence feels {confidence_level}; consider tightening stops or lightening exposure."
+            )
+        return (
+            "Outlook: sideways. The model sees no clear edge right now, so staying on the sidelines "
+            "or holding steady is reasonable."
+        )
 
     # ------------------------------------------------------------------
     # Logging utilities
