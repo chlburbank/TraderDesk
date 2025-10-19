@@ -1,7 +1,7 @@
 """Live trading orchestration primitives."""
 
 from .engine import LiveTradingConfig, LiveTradingEngine, TradeDecision
-from .providers import MarketDataProvider, YahooMarketDataProvider
+from .providers import MarketDataProvider, PolygonMarketDataProvider, YahooMarketDataProvider
 from .brokers import BrokerClient, PaperBroker
 
 __all__ = [
@@ -10,6 +10,7 @@ __all__ = [
     "TradeDecision",
     "MarketDataProvider",
     "YahooMarketDataProvider",
+    "PolygonMarketDataProvider",
     "BrokerClient",
     "PaperBroker",
 ]
