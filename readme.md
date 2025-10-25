@@ -107,6 +107,51 @@ When the AI signal meets the built-in thresholds, the engine allocates up to the
 `max_trade_notional` based on a blend of expected return strength and confidence, so you receive a
 ready-to-execute share count without tuning expert parameters.
 
+### 🔄 Running the live engine continuously
+
+Use the new runtime helpers to assemble the engine from environment-aware settings and drive it on
+an automated schedule. This lets you point the app at the Polygon feed (or keep the Yahoo fallback)
+and ensure the engine only evaluates during the hours you configure.
+
+```python
+from traderdesk import (
+    LiveTradingRuntimeConfig,
+    LiveTradingService,
+    build_live_engine,
+)
+
+runtime = LiveTradingRuntimeConfig.from_env(
+    ticker="SPY",
+    max_trade_notional=1500,
+)
+engine = build_live_engine(runtime)
+service = LiveTradingService(
+    engine,
+    interval=runtime.evaluation_interval,
+    allow_outside_market_hours=runtime.run_outside_market_hours,
+    market_open=runtime.market_open,
+    market_close=runtime.market_close,
+)
+
+try:
+    service.start()
+    # keep the process alive, e.g. with a while True: time.sleep(...) loop
+finally:
+    service.stop()
+```
+
+Key environment variables you can set ahead of `LiveTradingRuntimeConfig.from_env` include:
+
+- `TRADERDESK_PROVIDER` – choose `yahoo` (default) or `polygon`.
+- `TRADERDESK_LOOKBACK` / `TRADERDESK_INTERVAL` – control model context and evaluation cadence.
+- `TRADERDESK_MIN_CONFIDENCE`, `TRADERDESK_THRESHOLD`, `TRADERDESK_MAX_NOTIONAL` – tune risk gates.
+- `TRADERDESK_MARKET_OPEN` / `TRADERDESK_MARKET_CLOSE` – limit evaluations to certain hours.
+- `POLYGON_API_KEY`, `TRADERDESK_POLYGON_TIMESPAN`, `TRADERDESK_POLYGON_MULTIPLIER` – configure the
+  Polygon provider.
+
+The Qt UI automatically reads these settings when it boots up, so the "AI Evaluate & Trade" button
+uses the same live market data provider you configure for background services.
+
 ### 🖥️ One-Click AI Trades in the UI
 
 Inside the Qt application you only provide a ticker and an **Investment Budget ($)**. Pressing

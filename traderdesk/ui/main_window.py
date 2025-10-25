@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 
 from PySide6.QtCore import Qt
@@ -28,7 +29,7 @@ from ..benchmark import benchmark
 from ..data import get_crypto_intraday, get_data
 from ..live.brokers import PaperBroker
 from ..live.engine import LiveTradingConfig, LiveTradingEngine, TradeDecision
-from ..live.providers import YahooMarketDataProvider
+from ..live.runtime import LiveTradingRuntimeConfig, create_market_data_provider
 from ..signals import generate_signals
 from .toolbar import NavigationToolbar
 from .zoom import CtrlScrollZoom
@@ -121,7 +122,21 @@ class TraderDesk(QWidget):
 
         self._live_predictor = AIPredictor()
         self._crypto_predictor = AIPredictor(lookback=30)
-        self._live_data_provider = YahooMarketDataProvider()
+        default_ticker = self.ticker_input.text().strip().upper() or "SPY"
+        try:
+            self._live_runtime_defaults = LiveTradingRuntimeConfig.from_env(default_ticker)
+            self._live_data_provider = create_market_data_provider(
+                self._live_runtime_defaults
+            )
+        except Exception as exc:  # pragma: no cover - depends on external env setup
+            self._live_runtime_defaults = LiveTradingRuntimeConfig(ticker=default_ticker)
+            self._live_data_provider = create_market_data_provider(
+                self._live_runtime_defaults
+            )
+            self.append_log(
+                "Falling back to Yahoo Finance for live trading data. "
+                f"Reason: {exc}"
+            )
         self._live_broker = PaperBroker()
 
     # ------------------------------------------------------------------
@@ -281,14 +296,30 @@ class TraderDesk(QWidget):
                 raise ValueError("Investment budget must be greater than zero")
 
             previous_position = self._live_broker.position(ticker).quantity
-            config = LiveTradingConfig(
+            runtime = replace(
+                self._live_runtime_defaults,
                 ticker=ticker,
                 max_trade_notional=budget,
+            )
+            try:
+                data_provider = create_market_data_provider(runtime)
+            except Exception as exc:  # pragma: no cover - provider initialisation issues
+                raise RuntimeError(
+                    f"Failed to initialise the live market data provider: {exc}"
+                ) from exc
+            self._live_runtime_defaults = runtime
+            self._live_data_provider = data_provider
+            config = LiveTradingConfig(
+                ticker=runtime.ticker,
+                lookback_bars=runtime.lookback_bars,
+                min_confidence=runtime.min_confidence,
+                trade_threshold=runtime.trade_threshold,
+                max_trade_notional=runtime.max_trade_notional,
             )
             engine = LiveTradingEngine(
                 config=config,
                 predictor=self._live_predictor,
-                data_provider=self._live_data_provider,
+                data_provider=data_provider,
                 broker=self._live_broker,
             )
             decision = engine.evaluate_and_execute()

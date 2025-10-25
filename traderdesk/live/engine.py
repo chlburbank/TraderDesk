@@ -15,7 +15,7 @@ class LiveTradingConfig:
     """Configuration used by the live engine."""
 
     ticker: str
-    lookback_days: int = 120
+    lookback_bars: int = 120
     min_confidence: float = 0.4
     trade_threshold: float = 0.001
     max_trade_notional: float = 1000.0
@@ -51,7 +51,7 @@ class LiveTradingEngine:
 
     def evaluate(self) -> TradeDecision:
         snapshot = self.data_provider.fetch(
-            self.config.ticker, self.config.lookback_days
+            self.config.ticker, self.config.lookback_bars
         )
         prediction = self.predictor.predict(snapshot.closes)
         last_price = float(snapshot.closes.iloc[-1])
