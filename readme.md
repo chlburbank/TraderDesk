@@ -17,6 +17,7 @@ Example: SPY with 50/200 SMA crossover
 - ⚙️ Backtest basic crossover strategies
 - 🧮 Display key performance metrics (CAGR, Sharpe, Sortino, Max Drawdown)
 - 🤖 Prototype AI predictor for next-bar returns, confidence, and position sizing guidance
+- 🛡️ Live-trading scaffolding with position limits, stop-loss/take-profit guards, data failover, and journaling
 - 🪟 Simple GUI built with `PySide6`
 
 ---
@@ -145,9 +146,17 @@ Key environment variables you can set ahead of `LiveTradingRuntimeConfig.from_en
 - `TRADERDESK_PROVIDER` – choose `yahoo` (default) or `polygon`.
 - `TRADERDESK_LOOKBACK` / `TRADERDESK_INTERVAL` – control model context and evaluation cadence.
 - `TRADERDESK_MIN_CONFIDENCE`, `TRADERDESK_THRESHOLD`, `TRADERDESK_MAX_NOTIONAL` – tune risk gates.
+- `TRADERDESK_MAX_POSITION` – cap absolute share exposure to enforce hard position limits.
+- `TRADERDESK_STOP_LOSS`, `TRADERDESK_TAKE_PROFIT` – enable automatic exits once price drifts beyond your guardrails.
 - `TRADERDESK_MARKET_OPEN` / `TRADERDESK_MARKET_CLOSE` – limit evaluations to certain hours.
 - `POLYGON_API_KEY`, `TRADERDESK_POLYGON_TIMESPAN`, `TRADERDESK_POLYGON_MULTIPLIER` – configure the
   Polygon provider.
+- `TRADERDESK_FALLBACK_PROVIDER` – optional safety net (for example `yahoo`) if the primary feed fails.
+- `TRADERDESK_JOURNAL_PATH` – write each live trading decision to a CSV journal for later review.
+
+Behind the scenes the runtime will now wrap Polygon with automatic retry/backoff logic and, when a fallback
+provider is configured, fail over to it seamlessly using the new `FailoverMarketDataProvider`. Decisions are
+persisted by the `DecisionJournal`, so you can reconcile every AI action after a session completes.
 
 The Qt UI automatically reads these settings when it boots up, so the "AI Evaluate & Trade" button
 uses the same live market data provider you configure for background services.

@@ -315,6 +315,9 @@ class TraderDesk(QWidget):
                 min_confidence=runtime.min_confidence,
                 trade_threshold=runtime.trade_threshold,
                 max_trade_notional=runtime.max_trade_notional,
+                max_position=runtime.max_position,
+                stop_loss_pct=runtime.stop_loss_pct,
+                take_profit_pct=runtime.take_profit_pct,
             )
             engine = LiveTradingEngine(
                 config=config,
@@ -378,6 +381,21 @@ class TraderDesk(QWidget):
         pct_confidence = decision.confidence * 100
 
         if decision.should_trade:
+            if decision.reason == "stop loss exit":
+                return (
+                    "Protective stop hit: the latest price slipped beyond the configured stop-loss band, "
+                    "so the AI recommends flattening the position to avoid deeper losses."
+                )
+            if decision.reason == "take profit exit":
+                return (
+                    "Target reached: price momentum met your take-profit guardrail, so the model is "
+                    "locking in gains and waiting for a fresh setup."
+                )
+            if decision.reason == "position limit rebalancing":
+                return (
+                    "Position cap exceeded—scaling back to the configured share limit before taking on "
+                    "new risk."
+                )
             expectation = "rise" if decision.target_position >= 0 else "fall"
             shares_to_trade = abs(decision.target_position - previous_position)
             final_shares = abs(decision.target_position)
@@ -426,6 +444,15 @@ class TraderDesk(QWidget):
             return (
                 f"The signal fired, but one share costs ${decision.last_price:.2f} and your available budget is "
                 f"${config.max_trade_notional:.2f}, so add funds or pick a lower-priced asset before trading."
+            )
+        if decision.reason == "position limit reached":
+            return (
+                "The share cap you configured prevents adding exposure here. Increase the max position or "
+                "wait for a different opportunity."
+            )
+        if decision.reason == "position already satisfied":
+            return (
+                "You're already holding the target exposure, so the AI is standing pat until conditions change."
             )
         return "No trade was placed; stay in cash and check back when the AI provides a clearer recommendation."
 
