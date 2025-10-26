@@ -17,6 +17,7 @@ Example: SPY with 50/200 SMA crossover
 - ⚙️ Backtest basic crossover strategies
 - 🧮 Display key performance metrics (CAGR, Sharpe, Sortino, Max Drawdown)
 - 🤖 Prototype AI predictor for next-bar returns, confidence, and position sizing guidance
+- 🛡️ Live-trading scaffolding with position limits, stop-loss/take-profit guards, data failover, and journaling
 - 🪟 Simple GUI built with `PySide6`
 
 ---
@@ -106,6 +107,59 @@ print(decision)
 When the AI signal meets the built-in thresholds, the engine allocates up to the specified
 `max_trade_notional` based on a blend of expected return strength and confidence, so you receive a
 ready-to-execute share count without tuning expert parameters.
+
+### 🔄 Running the live engine continuously
+
+Use the new runtime helpers to assemble the engine from environment-aware settings and drive it on
+an automated schedule. This lets you point the app at the Polygon feed (or keep the Yahoo fallback)
+and ensure the engine only evaluates during the hours you configure.
+
+```python
+from traderdesk import (
+    LiveTradingRuntimeConfig,
+    LiveTradingService,
+    build_live_engine,
+)
+
+runtime = LiveTradingRuntimeConfig.from_env(
+    ticker="SPY",
+    max_trade_notional=1500,
+)
+engine = build_live_engine(runtime)
+service = LiveTradingService(
+    engine,
+    interval=runtime.evaluation_interval,
+    allow_outside_market_hours=runtime.run_outside_market_hours,
+    market_open=runtime.market_open,
+    market_close=runtime.market_close,
+)
+
+try:
+    service.start()
+    # keep the process alive, e.g. with a while True: time.sleep(...) loop
+finally:
+    service.stop()
+```
+
+Key environment variables you can set ahead of `LiveTradingRuntimeConfig.from_env` include:
+
+- `TRADERDESK_PROVIDER` – choose `yahoo` (default) or `polygon`.
+- `TRADERDESK_LOOKBACK` / `TRADERDESK_INTERVAL` – control model context and evaluation cadence.
+- `TRADERDESK_MIN_CONFIDENCE`, `TRADERDESK_THRESHOLD`, `TRADERDESK_MAX_NOTIONAL` – tune risk gates.
+- `TRADERDESK_MAX_POSITION` – cap absolute share exposure to enforce hard position limits.
+- `TRADERDESK_STOP_LOSS`, `TRADERDESK_TAKE_PROFIT` – enable automatic exits once price drifts beyond your guardrails.
+- `TRADERDESK_MARKET_OPEN` / `TRADERDESK_MARKET_CLOSE` – limit evaluations to certain hours.
+- `POLYGON_API_KEY`, `TRADERDESK_POLYGON_TIMESPAN`, `TRADERDESK_POLYGON_MULTIPLIER` – configure the
+  Polygon provider.
+- `TRADERDESK_FALLBACK_PROVIDER` – optional safety net (for example `yahoo`) if the primary feed fails.
+- `TRADERDESK_JOURNAL_PATH` – write each live trading decision to a CSV journal for later review.
+
+Behind the scenes the runtime will now wrap Polygon with automatic retry/backoff logic and, when a fallback
+provider is configured, fail over to it seamlessly using the new `FailoverMarketDataProvider`. Decisions are
+persisted by the `DecisionJournal`, so you can reconcile every AI action after a session completes.
+
+The Qt UI automatically reads these settings when it boots up, so the "AI Evaluate & Trade" button
+uses the same live market data provider you configure for background services.
 
 ### 🖥️ One-Click AI Trades in the UI
 
